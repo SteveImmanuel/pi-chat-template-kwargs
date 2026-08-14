@@ -17,18 +17,17 @@ pi install git:github.com/SteveImmanuel/pi-chat-template-kwargs
 
 Run `/ctk` to open a selector listing your saved overrides along with three actions.
 
-- `off` stops overriding
-- `create a new one` prompts for kwargs as JSON (validated), asks for confirmation, then saves
-- `delete an existing one` lets you pick a saved override and remove it
-
-
-The selected override is merged into `chat_template_kwargs` of every subsequent LLM request for the session. The active override is shown in the footer and marked `(selected)` in the picker.
+- `off`, to turn off the overrides
+- `create a new one`, to add new overrides from TUI interactively
+- `delete an existing one`, to remove saved overrides
 
 ## How it works
 
-The extension intercepts pi's `before_provider_request` hook, which fires right before each request is sent to the provider, and modifies the payload there. The active override is applied last and merged key by key into whatever `chat_template_kwargs` the payload already carries, so it updates matching keys and adds new ones rather than fully replacing the object.
+The extension intercepts `before_provider_request` hook, which fires right before each request is sent to the provider, and modifies the payload there. 
 
-Overrides are stored in `~/.pi/agent/chat-template-kwargs.json` as a JSON array of kwargs objects.
+The active override is **applied last** and merged key by key into whatever `chat_template_kwargs` the payload already carries, so it updates matching keys and adds new ones rather than fully replacing the object.
+
+Overrides are stored in `~/.pi/agent/chat-template-kwargs.json` as a JSON array of kwargs objects and can be edited directly.
 
 ```json
 [
