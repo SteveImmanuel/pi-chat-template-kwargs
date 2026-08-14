@@ -124,7 +124,7 @@ export default function (pi: ExtensionAPI) {
 					const options = [...overrides.map((o) => JSON.stringify(o)), CLEAR_OPTION, NEW_OPTION, DELETE_OPTION].map(
 						(value) => (value === selectedJson ? `${value} ${SELECTED_MARKER}` : value),
 					);
-					choice = (await ctx.ui.select("chat_template_kwargs", options))?.replace(` ${SELECTED_MARKER}`, "");
+					choice = (await ctx.ui.select("Select chat_template_kwargs overrides", options))?.replace(` ${SELECTED_MARKER}`, "");
 					if (!choice) return;
 				}
 
