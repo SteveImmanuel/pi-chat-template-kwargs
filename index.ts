@@ -59,7 +59,7 @@ export default function (pi: ExtensionAPI) {
 
 			activeName = choice;
 			activeKwargs = TEMPLATES[choice];
-			ctx.ui.setStatus("chat-template", `template:${choice}`);
+			ctx.ui.setStatus("chat-template", ctx.ui.theme.fg("dim", `template:${choice}`));
 			ctx.ui.notify(`chat_template_kwargs = ${JSON.stringify(activeKwargs)}`, "info");
 		},
 	});
