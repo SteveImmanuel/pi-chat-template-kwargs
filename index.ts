@@ -142,7 +142,7 @@ export default function (pi: ExtensionAPI) {
 					case CLEAR_OPTION:
 						selectedKwargs = undefined
 						ctx.ui.setStatus("ctk", undefined);
-						ctx.ui.notify("chat_template_kwargs override cleared", "info");
+						ctx.ui.notify("chat_template_kwargs override is turned off", "info");
 						return;
 
 					default: {
