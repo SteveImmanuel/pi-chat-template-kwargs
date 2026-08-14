@@ -7,23 +7,28 @@ const TEMPLATES: Record<string, Record<string, unknown>> = {
 
 const CLEAR_OPTION = "off";
 
+interface SelectedItem {
+	name: string;
+	kwargs: Record<string, unknown> | undefined;
+}
+
 export default function (pi: ExtensionAPI) {
-	let activeName: string | undefined;
-	let activeKwargs: Record<string, unknown> | undefined;
+	let selectedItem: SelectedItem | undefined;
 
 	pi.on("before_provider_request", (event, ctx) => {
-		if (!activeKwargs) return;
+		if (!selectedItem?.kwargs) return;
 		if (ctx.model?.api !== "openai-completions") return;
 
 		const payload = event.payload as Record<string, unknown>;
 		const oldKwargs = payload.chat_template_kwargs as Record<string, unknown> | undefined;
-		const next = { ...payload, chat_template_kwargs: { ...oldKwargs, ...activeKwargs } };
+		const next = { ...payload, chat_template_kwargs: { ...oldKwargs, ...selectedItem.kwargs } };
 
 		return next;
 	});
 
 	pi.registerCommand("chat-template", {
-		description: "Override chat_template_kwargs for this session",
+		description: "Override chat_template_kwargs as you define",
+
 		getArgumentCompletions: (prefix) => {
 			const items = [...Object.keys(TEMPLATES), CLEAR_OPTION]
 				.filter((name) => name.startsWith(prefix))
@@ -34,10 +39,12 @@ export default function (pi: ExtensionAPI) {
 				}));
 			return items.length > 0 ? items : null;
 		},
+
 		handler: async (args, ctx) => {
 			const options = [...Object.keys(TEMPLATES), CLEAR_OPTION].map((name) =>
-				name === activeName ? `${name} (active)` : name,
+				name === selectedItem?.name ? `${name} (active)` : name,
 			);
+
 			const choice = (args.trim() || (await ctx.ui.select("chat_template_kwargs", options)))?.replace(
 				" (active)",
 				"",
@@ -45,8 +52,7 @@ export default function (pi: ExtensionAPI) {
 			if (!choice) return;
 
 			if (choice === CLEAR_OPTION) {
-				activeName = undefined;
-				activeKwargs = undefined;
+				selectedItem = undefined
 				ctx.ui.setStatus("chat-template", undefined);
 				ctx.ui.notify("chat_template_kwargs override cleared", "info");
 				return;
@@ -57,10 +63,9 @@ export default function (pi: ExtensionAPI) {
 				return;
 			}
 
-			activeName = choice;
-			activeKwargs = TEMPLATES[choice];
-			ctx.ui.setStatus("chat-template", ctx.ui.theme.fg("dim", `template:${choice}`));
-			ctx.ui.notify(`chat_template_kwargs = ${JSON.stringify(activeKwargs)}`, "info");
+			selectedItem = {name: choice, kwargs: TEMPLATES[choice]};
+			ctx.ui.setStatus("ctk", ctx.ui.theme.fg("dim", `ctk: ${selectedItem.name}`));
+			ctx.ui.notify(`ctk = ${JSON.stringify(selectedItem.kwargs)}`, "info");
 		},
 	});
 }
