@@ -8,24 +8,19 @@ const CLEAR_OPTION = "off";
 const NEW_OPTION = "create a new one";
 const DELETE_OPTION = "delete an existing one";
 
-interface SelectedItem {
-	name: string;
-	kwargs: Record<string, unknown> | undefined;
-}
 
-
-function loadOverrides(): Record<string, Record<string, unknown>> {
+function loadOverrides(): Record<string, unknown>[] {
 	try {
 		return JSON.parse(readFileSync(OVERRIDES_FILE_PATH, "utf8"));
 	} catch (err) {
-		if ((err as NodeJS.ErrnoException).code === "ENOENT") return {};
+		if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
 		throw err;
 	}
 }
 
 export default function (pi: ExtensionAPI) {
-	let selectedItem: SelectedItem | undefined;
-	let overrides: Record<string, Record<string, unknown>> = {};
+	let selectedKwargs: Record<string, unknown> | undefined;
+	let overrides: Record<string, unknown>[] = [];
 	let loadError: string | undefined;
 
 	pi.on("session_start", (event, ctx) => {
@@ -41,12 +36,12 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.on("before_provider_request", (event, ctx) => {
-		if (!selectedItem) return;
+		if (!selectedKwargs) return;
 		if (ctx.model?.api !== "openai-completions") return;
 
 		const payload = event.payload as Record<string, unknown>;
 		const oldKwargs = payload.chat_template_kwargs as Record<string, unknown> | undefined;
-		const next = { ...payload, chat_template_kwargs: { ...oldKwargs, ...selectedItem.kwargs } };
+		const next = { ...payload, chat_template_kwargs: { ...oldKwargs, ...selectedKwargs } };
 
 		return next;
 	});
@@ -71,64 +66,48 @@ export default function (pi: ExtensionAPI) {
 			}
 		}
 
-		let name: string;
-		while (true) {
-			const input = await ctx.ui.input("Name this override, e.g., low effort, no thinking");
-			if (input === undefined) return;
-
-			name = input.trim();
-			if (!name) {
-				ctx.ui.notify("Name cannot be empty", "warning");
-				continue;
-			}
-			if (name === CLEAR_OPTION || name === NEW_OPTION || name === DELETE_OPTION) {
-				ctx.ui.notify(`"${name}" is reserved`, "warning");
-				continue;
-			}
-			if (name in overrides && !(await ctx.ui.confirm("Overwrite?", `"${name}" already exists`))) {
-				continue;
-			}
-			break;
+		const kwargsJson = JSON.stringify(kwargs);
+		if (overrides.some((o) => JSON.stringify(o) === kwargsJson)) {
+			ctx.ui.notify("This override already exists", "warning");
+			return;
 		}
+		if (!(await ctx.ui.confirm("Save this override?", kwargsJson))) return;
 
-		writeFileSync(OVERRIDES_FILE_PATH, `${JSON.stringify({ ...overrides, [name]: kwargs }, null, "\t")}\n`, "utf8");
+		writeFileSync(OVERRIDES_FILE_PATH, `${JSON.stringify([...overrides, kwargs], null, "\t")}\n`, "utf8");
 		overrides = loadOverrides();
-		ctx.ui.notify(`Saved chat_template_kwargs override "${name}" to ${OVERRIDES_FILE_PATH}`, "info");
+		ctx.ui.notify(`Saved chat_template_kwargs override ${kwargsJson} to ${OVERRIDES_FILE_PATH}`, "info");
 	}
 
 	async function deleteOverride(ctx: ExtensionCommandContext): Promise<void> {
-		const names = Object.keys(overrides);
-		if (names.length === 0) {
+		if (overrides.length === 0) {
 			ctx.ui.notify("No overrides to delete", "warning");
 			return;
 		}
 
-		const name = await ctx.ui.select("Delete which override?", names);
-		if (!name) return;
-		if (!(await ctx.ui.confirm(`Delete "${name}"?`, JSON.stringify(overrides[name])))) return;
+		const choice = await ctx.ui.select("Delete which override?", overrides.map((o) => JSON.stringify(o)));
+		if (!choice) return;
+		if (!(await ctx.ui.confirm("Delete this override?", choice))) return;
 
-		const { [name]: _, ...rest } = overrides;
+		const rest = overrides.filter((o) => JSON.stringify(o) !== choice);
 		writeFileSync(OVERRIDES_FILE_PATH, `${JSON.stringify(rest, null, "\t")}\n`, "utf8");
 		overrides = loadOverrides();
 
-		if (selectedItem?.name === name) {
-			selectedItem = undefined;
+		if (selectedKwargs && JSON.stringify(selectedKwargs) === choice) {
+			selectedKwargs = undefined;
 			ctx.ui.setStatus("ctk", undefined);
 		}
-		ctx.ui.notify(`Deleted chat_template_kwargs override "${name}" from ${OVERRIDES_FILE_PATH}`, "info");
+		ctx.ui.notify(`Deleted chat_template_kwargs override ${choice} from ${OVERRIDES_FILE_PATH}`, "info");
 	}
 
 	pi.registerCommand("ctk", {
 		description: "Override chat_template_kwargs as you define",
 
 		getArgumentCompletions: (prefix) => {
-			const items = [...Object.keys(overrides), CLEAR_OPTION]
-				.filter((name) => name.startsWith(prefix))
-				.map((name) => ({
-					value: name,
-					label: name,
-					description: name === CLEAR_OPTION ? "clear override" : JSON.stringify(overrides[name]),
-				}));
+			const items = [...overrides.map((o) => JSON.stringify(o)), CLEAR_OPTION]
+				.filter((value) => value.startsWith(prefix))
+				.map((value) =>
+					value === CLEAR_OPTION ? { value, label: value, description: "turn off override" } : { value, label: value },
+				);
 			return items.length > 0 ? items : null;
 		},
 
@@ -141,8 +120,9 @@ export default function (pi: ExtensionAPI) {
 			let choice: string | undefined = args.trim() || undefined;
 			while (true) {
 				if (!choice) {
-					const options = [...Object.keys(overrides), CLEAR_OPTION, NEW_OPTION, DELETE_OPTION].map((name) =>
-						name === selectedItem?.name ? `${name} ${SELECTED_MARKER}` : name,
+					const selectedJson = selectedKwargs && JSON.stringify(selectedKwargs);
+					const options = [...overrides.map((o) => JSON.stringify(o)), CLEAR_OPTION, NEW_OPTION, DELETE_OPTION].map(
+						(value) => (value === selectedJson ? `${value} ${SELECTED_MARKER}` : value),
 					);
 					choice = (await ctx.ui.select("chat_template_kwargs", options))?.replace(` ${SELECTED_MARKER}`, "");
 					if (!choice) return;
@@ -160,21 +140,22 @@ export default function (pi: ExtensionAPI) {
 						break;
 
 					case CLEAR_OPTION:
-						selectedItem = undefined
+						selectedKwargs = undefined
 						ctx.ui.setStatus("ctk", undefined);
 						ctx.ui.notify("chat_template_kwargs override cleared", "info");
 						return;
 
 					default: {
-						if (!(choice in overrides)) {
+						const match = overrides.find((o) => JSON.stringify(o) === choice);
+						if (!match) {
 							ctx.ui.notify(`Unknown override: ${choice}`, "error");
 							return;
 						}
-						selectedItem = {name: choice, kwargs: overrides[choice]};
-						const kwargsJson = JSON.stringify(selectedItem.kwargs);
+						selectedKwargs = match;
+						const kwargsJson = JSON.stringify(selectedKwargs);
 						const kwargsLabel = kwargsJson.length > 30 ? `${kwargsJson.slice(0, 30)}...` : kwargsJson;
-						ctx.ui.setStatus("ctk", ctx.ui.theme.fg("dim", `ctk: ${selectedItem.name} ${kwargsLabel}`));
-						ctx.ui.notify(`chat_template_kwargs override is set to ${JSON.stringify(selectedItem.kwargs)}`, "info");
+						ctx.ui.setStatus("ctk", ctx.ui.theme.fg("dim", `ctk: ${kwargsLabel}`));
+						ctx.ui.notify(`chat_template_kwargs override is set to ${kwargsJson}`, "info");
 						return;
 					}
 				}
