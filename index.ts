@@ -137,6 +137,7 @@ export default function (pi: ExtensionAPI) {
 				ctx.ui.notify(`Failed to load ${OVERRIDES_FILE_PATH}: ${loadError}`, "error");
 				return;
 			}
+
 			let choice: string | undefined = args.trim() || undefined;
 			while (true) {
 				if (!choice) {
@@ -146,29 +147,38 @@ export default function (pi: ExtensionAPI) {
 					choice = (await ctx.ui.select("chat_template_kwargs", options))?.replace(` ${SELECTED_MARKER}`, "");
 					if (!choice) return;
 				}
-				if (choice !== NEW_OPTION && choice !== DELETE_OPTION) break;
-				if (choice === NEW_OPTION) await createOverride(ctx);
-				else await deleteOverride(ctx);
-				choice = undefined; // reopen the picker with the fresh override list
-			}
 
-			if (choice === CLEAR_OPTION) {
-				selectedItem = undefined
-				ctx.ui.setStatus("chat-template", undefined);
-				ctx.ui.notify("chat_template_kwargs override cleared", "info");
-				return;
-			}
+				switch (choice) {
+					case NEW_OPTION:
+						await createOverride(ctx);
+						choice = undefined;
+						break;
 
-			if (!(choice in overrides)) {
-				ctx.ui.notify(`Unknown override: ${choice}`, "error");
-				return;
-			}
+					case DELETE_OPTION:
+						await deleteOverride(ctx);
+						choice = undefined;
+						break;
 
-			selectedItem = {name: choice, kwargs: overrides[choice]};
-			const kwargsJson = JSON.stringify(selectedItem.kwargs);
-			const kwargsLabel = kwargsJson.length > 30 ? `${kwargsJson.slice(0, 30)}...` : kwargsJson;
-			ctx.ui.setStatus("ctk", ctx.ui.theme.fg("dim", `ctk: ${selectedItem.name} ${kwargsLabel}`));
-			ctx.ui.notify(`ctk = ${JSON.stringify(selectedItem.kwargs)}`, "info");
+					case CLEAR_OPTION:
+						selectedItem = undefined
+						ctx.ui.setStatus("ctk", undefined);
+						ctx.ui.notify("chat_template_kwargs override cleared", "info");
+						return;
+
+					default: {
+						if (!(choice in overrides)) {
+							ctx.ui.notify(`Unknown override: ${choice}`, "error");
+							return;
+						}
+						selectedItem = {name: choice, kwargs: overrides[choice]};
+						const kwargsJson = JSON.stringify(selectedItem.kwargs);
+						const kwargsLabel = kwargsJson.length > 30 ? `${kwargsJson.slice(0, 30)}...` : kwargsJson;
+						ctx.ui.setStatus("ctk", ctx.ui.theme.fg("dim", `ctk: ${selectedItem.name} ${kwargsLabel}`));
+						ctx.ui.notify(`chat_template_kwargs override is set to ${JSON.stringify(selectedItem.kwargs)}`, "info");
+						return;
+					}
+				}
+			}
 		},
 	});
 }
