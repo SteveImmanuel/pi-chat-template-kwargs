@@ -5,6 +5,7 @@ const TEMPLATES: Record<string, Record<string, unknown>> = {
 	"xhigh": { reasoning_effort: 'xhigh' },
 };
 
+const SELECTED_MARKER = "(selected)"
 const CLEAR_OPTION = "off";
 
 interface SelectedItem {
@@ -26,7 +27,7 @@ export default function (pi: ExtensionAPI) {
 		return next;
 	});
 
-	pi.registerCommand("chat-template", {
+	pi.registerCommand("ctk", {
 		description: "Override chat_template_kwargs as you define",
 
 		getArgumentCompletions: (prefix) => {
@@ -42,11 +43,11 @@ export default function (pi: ExtensionAPI) {
 
 		handler: async (args, ctx) => {
 			const options = [...Object.keys(TEMPLATES), CLEAR_OPTION].map((name) =>
-				name === selectedItem?.name ? `${name} (active)` : name,
+				name === selectedItem?.name ? `${name} ${SELECTED_MARKER}` : name,
 			);
 
 			const choice = (args.trim() || (await ctx.ui.select("chat_template_kwargs", options)))?.replace(
-				" (active)",
+				` ${SELECTED_MARKER}`,
 				"",
 			);
 			if (!choice) return;
