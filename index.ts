@@ -1,10 +1,8 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { getAgentDir, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-const TEMPLATES: Record<string, Record<string, unknown>> = {
-	"low": { reasoning_effort: 'low' },
-	"xhigh": { reasoning_effort: 'xhigh' },
-};
-
+const TEMPLATES_FILE_PATH = join(getAgentDir(), "chat-template-kwargs.json");
 const SELECTED_MARKER = "(selected)"
 const CLEAR_OPTION = "off";
 
@@ -13,11 +11,35 @@ interface SelectedItem {
 	kwargs: Record<string, unknown> | undefined;
 }
 
+
+function loadTemplates(): Record<string, Record<string, unknown>> {
+	try {
+		return JSON.parse(readFileSync(TEMPLATES_FILE_PATH, "utf8"));
+	} catch (err) {
+		if ((err as NodeJS.ErrnoException).code === "ENOENT") return {};
+		throw err;
+	}
+}
+
 export default function (pi: ExtensionAPI) {
 	let selectedItem: SelectedItem | undefined;
+	let templates: Record<string, Record<string, unknown>> = {};
+	let loadError: string | undefined;
+
+	pi.on("session_start", (event, ctx) => {
+		if (event.reason !== "startup" && event.reason !== "reload") return;
+
+		try {
+			templates = loadTemplates();
+			loadError = undefined;
+		} catch (err) {
+			loadError = err instanceof Error ? err.message : String(err);
+			ctx.ui.notify(`Failed to load ${TEMPLATES_FILE_PATH}: ${loadError}`, "error");
+		}
+	});
 
 	pi.on("before_provider_request", (event, ctx) => {
-		if (!selectedItem?.kwargs) return;
+		if (!selectedItem) return;
 		if (ctx.model?.api !== "openai-completions") return;
 
 		const payload = event.payload as Record<string, unknown>;
@@ -31,18 +53,27 @@ export default function (pi: ExtensionAPI) {
 		description: "Override chat_template_kwargs as you define",
 
 		getArgumentCompletions: (prefix) => {
-			const items = [...Object.keys(TEMPLATES), CLEAR_OPTION]
+			const items = [...Object.keys(templates), CLEAR_OPTION]
 				.filter((name) => name.startsWith(prefix))
 				.map((name) => ({
 					value: name,
 					label: name,
-					description: name === CLEAR_OPTION ? "clear override" : JSON.stringify(TEMPLATES[name]),
+					description: name === CLEAR_OPTION ? "clear override" : JSON.stringify(templates[name]),
 				}));
 			return items.length > 0 ? items : null;
 		},
 
 		handler: async (args, ctx) => {
-			const options = [...Object.keys(TEMPLATES), CLEAR_OPTION].map((name) =>
+			if (loadError) {
+				ctx.ui.notify(`Failed to load ${TEMPLATES_FILE_PATH}: ${loadError}`, "error");
+				return;
+			}
+			if (Object.keys(templates).length === 0) {
+				ctx.ui.notify(`No templates defined. Add some to ${TEMPLATES_FILE_PATH}`, "warning");
+				return;
+			}
+
+			const options = [...Object.keys(templates), CLEAR_OPTION].map((name) =>
 				name === selectedItem?.name ? `${name} ${SELECTED_MARKER}` : name,
 			);
 
@@ -59,12 +90,12 @@ export default function (pi: ExtensionAPI) {
 				return;
 			}
 
-			if (!(choice in TEMPLATES)) {
+			if (!(choice in templates)) {
 				ctx.ui.notify(`Unknown template: ${choice}`, "error");
 				return;
 			}
 
-			selectedItem = {name: choice, kwargs: TEMPLATES[choice]};
+			selectedItem = {name: choice, kwargs: templates[choice]};
 			ctx.ui.setStatus("ctk", ctx.ui.theme.fg("dim", `ctk: ${selectedItem.name}`));
 			ctx.ui.notify(`ctk = ${JSON.stringify(selectedItem.kwargs)}`, "info");
 		},
