@@ -1,10 +1,11 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { getAgentDir, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { getAgentDir, type ExtensionAPI, type ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 
 const TEMPLATES_FILE_PATH = join(getAgentDir(), "chat-template-kwargs.json");
 const SELECTED_MARKER = "(selected)"
 const CLEAR_OPTION = "off";
+const NEW_OPTION = "create a new one";
 
 interface SelectedItem {
 	name: string;
@@ -49,6 +50,51 @@ export default function (pi: ExtensionAPI) {
 		return next;
 	});
 
+	async function createTemplate(ctx: ExtensionCommandContext): Promise<void> {
+		let draft = "";
+		let kwargs: Record<string, unknown>;
+
+		while (true) {
+			const raw = await ctx.ui.editor("Type the override value for \"chat_template_kwargs\" in valid JSON, e.g., {\"reasoning_strength\": \"low\"} ", draft);
+			if (raw === undefined) return;
+			draft = raw;
+			try {
+				const parsed = JSON.parse(raw); // check json valid
+				if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+					throw new Error("top level must be a JSON object");
+				}
+				kwargs = parsed;
+				break;
+			} catch (err) {
+				ctx.ui.notify(`Invalid JSON: ${err instanceof Error ? err.message : err}`, "error");
+			}
+		}
+
+		let name: string;
+		while (true) {
+			const input = await ctx.ui.input("Name this override, e.g., low effort, no thinking");
+			if (input === undefined) return;
+			
+			name = input.trim();
+			if (!name) {
+				ctx.ui.notify("Name cannot be empty", "warning");
+				continue;
+			}
+			if (name === CLEAR_OPTION || name === NEW_OPTION) {
+				ctx.ui.notify(`"${name}" is reserved`, "warning");
+				continue;
+			}
+			if (name in templates && !(await ctx.ui.confirm("Overwrite?", `"${name}" already exists`))) {
+				continue;
+			}
+			break;
+		}
+
+		writeFileSync(TEMPLATES_FILE_PATH, `${JSON.stringify({ ...templates, [name]: kwargs }, null, "\t")}\n`, "utf8");
+		templates = loadTemplates();
+		ctx.ui.notify(`Saved chat_template_kwargs override config "${name}" to ${TEMPLATES_FILE_PATH}`, "info");
+	}
+
 	pi.registerCommand("ctk", {
 		description: "Override chat_template_kwargs as you define",
 
@@ -68,20 +114,19 @@ export default function (pi: ExtensionAPI) {
 				ctx.ui.notify(`Failed to load ${TEMPLATES_FILE_PATH}: ${loadError}`, "error");
 				return;
 			}
-			if (Object.keys(templates).length === 0) {
-				ctx.ui.notify(`No templates defined. Add some to ${TEMPLATES_FILE_PATH}`, "warning");
-				return;
+			let choice: string | undefined = args.trim() || undefined;
+			while (true) {
+				if (!choice) {
+					const options = [...Object.keys(templates), CLEAR_OPTION, NEW_OPTION].map((name) =>
+						name === selectedItem?.name ? `${name} ${SELECTED_MARKER}` : name,
+					);
+					choice = (await ctx.ui.select("chat_template_kwargs", options))?.replace(` ${SELECTED_MARKER}`, "");
+					if (!choice) return;
+				}
+				if (choice !== NEW_OPTION) break;
+				await createTemplate(ctx);
+				choice = undefined; // reopen the picker with the fresh template list
 			}
-
-			const options = [...Object.keys(templates), CLEAR_OPTION].map((name) =>
-				name === selectedItem?.name ? `${name} ${SELECTED_MARKER}` : name,
-			);
-
-			const choice = (args.trim() || (await ctx.ui.select("chat_template_kwargs", options)))?.replace(
-				` ${SELECTED_MARKER}`,
-				"",
-			);
-			if (!choice) return;
 
 			if (choice === CLEAR_OPTION) {
 				selectedItem = undefined
@@ -96,7 +141,9 @@ export default function (pi: ExtensionAPI) {
 			}
 
 			selectedItem = {name: choice, kwargs: templates[choice]};
-			ctx.ui.setStatus("ctk", ctx.ui.theme.fg("dim", `ctk: ${selectedItem.name}`));
+			const kwargsJson = JSON.stringify(selectedItem.kwargs);
+			const kwargsLabel = kwargsJson.length > 30 ? `${kwargsJson.slice(0, 30)}...` : kwargsJson;
+			ctx.ui.setStatus("ctk", ctx.ui.theme.fg("dim", `ctk: ${selectedItem.name} ${kwargsLabel}`));
 			ctx.ui.notify(`ctk = ${JSON.stringify(selectedItem.kwargs)}`, "info");
 		},
 	});
